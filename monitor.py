@@ -5,8 +5,8 @@ import pandas as pd
 import time
 
 # --- CONFIGURAÇÕES DE ACESSO ---
-TELEGRAM_TOKEN = os.getenv('8459605238:AAGtQn2-NGZDZOI3Pdb5w2dM07soLZM4wgA')
-TELEGRAM_CHAT_ID = os.getenv('-1003869932591') 
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID') 
 
 # --- PALAVRAS-CHAVE ---
 PALAVRAS_INTERESSE = [
