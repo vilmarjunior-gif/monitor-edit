@@ -12,7 +12,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 PALAVRAS_INTERESSE = [
     "silvicultura", "proinfra", "fundo", "carbono", "sustentável", 
     "chamada", "agricultura", "bioinsumos", "pesquisa", "familiar",
-    "regenerativa", "inovação", "grant", "edital", "mato grosso", "amazônia", "acesso", "sobre"
+    "regenerativa", "inovação", "grant", "edital", "mato grosso", "amazônia", "acesso", "sobre",
     "sustentabilidade", "ICTs", "universal"
 ]
 
@@ -130,4 +130,5 @@ def monitorar():
         print("Fim da varredura. Nada novo.")
 
 if __name__ == "__main__":
+
     monitorar()
