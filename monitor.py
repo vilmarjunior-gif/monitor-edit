@@ -12,7 +12,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 PALAVRAS_INTERESSE = [
     "silvicultura", "proinfra", "fundo", "carbono", "sustentável", 
     "chamada", "agricultura", "bioinsumos", "pesquisa", "familiar",
-    "regenerativa", "inovação", "grant", "edital", "mato grosso", "amazônia", "acesso", "sobre",
+    "regenerativa", "inovação", "clima", "edital", "mato grosso", "amazônia", "acesso", "sobre",
     "sustentabilidade", "ICTs", "universal"
 ]
 
@@ -73,7 +73,7 @@ def verificar_palavras_chave(texto):
         return False
 
     # 2. Palavras de descarte (adicionar o quanto eu quiser - nao esquecer)
-    DESCARTAR = ["resultado", "finalizado", "encerrado", "preliminar", "homologação", "psicologia", "musica", "saude bucal"] 
+    DESCARTAR = ["resultado", "finalizado", "encerrado", "preliminar", "homologação", "psicologia", "musica", "saude bucal", "defesa", "mineral"] 
     if any(desc in texto_min for desc in DESCARTAR):
         return False
         
@@ -142,4 +142,5 @@ def monitorar():
 if __name__ == "__main__":
 
     monitorar()
+
 
