@@ -38,9 +38,11 @@ MAPA_SITES = [
         "tag": "a", "filtro": "editais", "base_url": ""
     },
     {
-        "nome": "FOOD TANK", 
-        "url": "https://foodtank.com/news/category/regenerative-agriculture/", 
-        "tag": "a", "filtro": "", "base_url": ""
+        "nome": "Clima e Sociedade (iCS)", 
+        "url": "https://climaesociedade.org/editais/", 
+        "tag": "h3", 
+        "filtro": "http", # O iCS usa links completos, então filtramos por http
+        "base_url": ""
     },
     {
         "nome": "EMBRAPII", 
@@ -99,8 +101,16 @@ def monitorar():
             soup = BeautifulSoup(res.text, 'html.parser')
             
             for item in soup.find_all(site["tag"]):
-                link = item.get('href', '')
+                # Se a tag for h3 (como no iCS), o link está no <a> dentro do h3
+                if item.name == 'h3':
+                    link_tag = item.find('a')
+                    link = link_tag.get('href', '') if link_tag else ''
+                else:
+                    link = item.get('href', '')
+                
                 titulo = item.get_text().strip()
+                
+                # ... resto da sua lógica de limpeza e filtro ...
                 
                 # Garante que o link seja completo
                 if link.startswith('/'):
@@ -132,3 +142,4 @@ def monitorar():
 if __name__ == "__main__":
 
     monitorar()
+
