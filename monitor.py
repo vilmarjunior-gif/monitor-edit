@@ -73,7 +73,7 @@ def verificar_palavras_chave(texto):
         return False
 
     # 2. Palavras de descarte (adicionar o quanto eu quiser - nao esquecer)
-    DESCARTAR = ["resultado", "finalizado", "encerrado", "preliminar", "homologação", "psicologia", "musica", "saude bucal", "defesa", "mineral"] 
+    DESCARTAR = ["resultado", "finalizado", "encerrado", "preliminar", "homologação", "psicologia", "musica", "saúde bucal", "defesa", "mineral", "aeronáutica", "naval", "semicondutores", "saúde"] 
     if any(desc in texto_min for desc in DESCARTAR):
         return False
         
