@@ -4,13 +4,14 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import google.generativeai as genai
-import fitz  # Biblioteca PyMuPDF (Adicione PyMuPDF no requirements.txt)
+import fitz  # Biblioteca PyMuPDF (Certifique-se de ter pymupdf no requirements.txt)
 import io
 
 # --- CONFIGURAÇÕES DE IA (GEMINI) ---
 gemini_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_key)
-model = genai.GenerativeModel('models/gemini-2.5-flash')
+# Usando o modelo estável para evitar erros de "not found"
+model = genai.GenerativeModel('models/gemini-1.5-flash')
 
 # --- CONFIGURAÇÕES DE ACESSO ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -38,16 +39,15 @@ HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 
 def gerar_resumo_ia(link):
     try:
-        # 1. Faz o download com timeout maior para PDFs pesados
+        # 1. Faz o download com timeout maior
         res = requests.get(link, headers=HEADERS, timeout=40, verify=False)
         content_type = res.headers.get('Content-Type', '').lower()
         texto_para_ia = ""
 
-        # 2. Se for PDF (pelo cabeçalho ou pela extensão)
+        # 2. Se for PDF
         if 'pdf' in content_type or link.lower().endswith('.pdf'):
             with fitz.open(stream=io.BytesIO(res.content), filetype="pdf") as doc:
-                # Pega as primeiras 6 páginas (geralmente onde estão os dados cruciais)
-                for page in doc[:6]:
+                for page in doc[:6]: # Primeiras 6 páginas
                     texto_para_ia += page.get_text()
         else:
             # 3. Se for página HTML
@@ -56,12 +56,13 @@ def gerar_resumo_ia(link):
                 script.extract()
             texto_para_ia = ' '.join(soup.get_text().split())
 
-        texto_final = texto_para_ia[:9000] # Limite seguro para a IA
+        texto_final = texto_para_ia[:9000] # Limite para a IA
 
         if len(texto_final) < 60:
             return "⚠️ O conteúdo do edital não pôde ser lido (página vazia ou protegida)."
 
-       prompt = (
+        # Ajuste de indentação e correção da variável texto_final
+        prompt = (
             f"Analise o conteúdo deste edital e extraia as informações de forma técnica e direta: "
             f"1. OBJETIVO (O que é o edital?)\n"
             f"2. PÚBLICO-ALVO (Quem pode participar?)\n"
@@ -69,8 +70,9 @@ def gerar_resumo_ia(link):
             f"4. VALORES (Valor total ou por projeto)\n\n"
             f"Ao final, adicione uma seção chamada 'CONSIDERAÇÕES' com uma análise breve "
             f"sobre a relevância do tema para a Embrapa.\n"
-            f"Seja conciso e use tópicos. Texto: {texto_curto}"
+            f"Seja conciso e use tópicos. Texto: {texto_final}"
         )
+        
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
@@ -79,7 +81,10 @@ def gerar_resumo_ia(link):
 def enviar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"}
-    requests.post(url, data=payload, timeout=10)
+    try:
+        requests.post(url, data=payload, timeout=10)
+    except:
+        pass
 
 def verificar_palavras_chave(texto):
     texto_min = texto.lower()
@@ -96,11 +101,16 @@ def monitorar():
 
     for site in MAPA_SITES:
         try:
+            print(f"Verificando {site['nome']}...")
             res = requests.get(site["url"], headers=HEADERS, timeout=30)
             soup = BeautifulSoup(res.text, 'html.parser')
             for item in soup.find_all(site["tag"]):
-                link_tag = item.find('a') if item.name == 'h3' else item
-                link = link_tag.get('href', '') if link_tag else ''
+                if item.name == 'h3':
+                    link_tag = item.find('a')
+                    link = link_tag.get('href', '') if link_tag else ''
+                else:
+                    link = item.get('href', '')
+                
                 titulo = item.get_text().strip()
                 
                 if link.startswith('/'): link = site["base_url"] + link
@@ -108,12 +118,13 @@ def monitorar():
                 
                 if site["filtro"] in link and link not in vistos and len(titulo) > 20:
                     if verificar_palavras_chave(titulo):
+                        print(f"Novo edital: {titulo}")
                         resumo = gerar_resumo_ia(link)
                         msg = f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🤖 *Resumo:*\n{resumo}\n\n🔗 [Acessar Edital]({link})"
                         enviar_telegram(msg)
                         novos_encontrados.append([site["nome"], titulo, link])
                         vistos.append(link)
-                        time.sleep(3) # Pausa para evitar bloqueio
+                        time.sleep(3) 
                     else:
                         novos_encontrados.append([site["nome"], titulo, link])
                         vistos.append(link)
