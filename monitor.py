@@ -11,7 +11,7 @@ import io
 gemini_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_key)
 # Usando o modelo estável para evitar erros de "not found"
-model = genai.GenerativeModel('models/gemini-1.5-flash')
+model = genai.GenerativeModel('models/gemini-2.5-flash')
 
 # --- CONFIGURAÇÕES DE ACESSO ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
