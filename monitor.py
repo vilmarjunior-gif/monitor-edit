@@ -61,15 +61,16 @@ def gerar_resumo_ia(link):
         if len(texto_final) < 60:
             return "⚠️ O conteúdo do edital não pôde ser lido (página vazia ou protegida)."
 
-        prompt = (
-            f"Você é um analista sênior da Embrapa. Com base no texto abaixo, extraia:\n"
+       prompt = (
+            f"Analise o conteúdo deste edital e extraia as informações de forma técnica e direta: "
             f"1. OBJETIVO (O que é o edital?)\n"
             f"2. PÚBLICO-ALVO (Quem pode participar?)\n"
-            f"3. CRONOGRAMA (Datas de inscrição e resultados)\n"
+            f"3. CRONOGRAMA (Datas de inscrição e prazos)\n"
             f"4. VALORES (Valor total ou por projeto)\n\n"
-            f"Texto: {texto_final}"
+            f"Ao final, adicione uma seção chamada 'CONSIDERAÇÕES' com uma análise breve "
+            f"sobre a relevância do tema para a Embrapa.\n"
+            f"Seja conciso e use tópicos. Texto: {texto_curto}"
         )
-
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
