@@ -11,10 +11,10 @@ import urllib3
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Desativa avisos de certificado (comum em sites governamentais)
+# Desativa avisos de SSL para sites governamentais instáveis
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- CONFIGURAÇÕES DE IA ---
+# --- CONFIGURAÇÕES DE IA (GEMINI) ---
 gemini_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_key)
 model = genai.GenerativeModel('models/gemini-1.5-flash')
@@ -45,11 +45,12 @@ PALAVRAS_INTERESSE = [
     "resiliência climática", "descarbonização", "plano de baixa emissão de carbono"
 ]
 
+# --- MAPA DE TODOS OS SITES ---
 MAPA_SITES = [
     {
         "nome": "FINEP", 
         "url": "https://www.finep.gov.br/chamadas-publicas/chamadaspublicas?situacao=aberta", 
-        "tag": "tr", # Agora busca a linha inteira da tabela
+        "tag": "tr", 
         "filtro": "chamada", 
         "base_url": "https://www.finep.gov.br"
     },
@@ -64,30 +65,33 @@ MAPA_SITES = [
 DB_FILE = "historico_editais.csv"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
-# ... (Funções enviar_email, gerar_resumo_ia, enviar_telegram permanecem as mesmas) ...
 def enviar_email(titulo, resumo, link):
     if not EMAIL_USER or not EMAIL_PASS: return
-    msg = MIMEMultipart(); msg['From'] = EMAIL_USER; msg['To'] = EMAIL_DESTINO; msg['Subject'] = f"📌 NOVO EDITAL: {titulo[:60]}..."
-    corpo = f"<html><body><h2>Novo Edital</h2><p><b>Título:</b> {titulo}</p><hr><h3>🤖 Resumo:</h3><p>{resumo}</p><hr><p>🔗 <a href='{link}'>Link</a></p></body></html>"
-    msg.attach(MIMEText(corpo, 'html'))
+    msg = MIMEMultipart()
+    msg['From'] = EMAIL_USER
+    msg['To'] = EMAIL_DESTINO
+    msg['Subject'] = f"📌 NOVO EDITAL: {titulo[:60]}..."
+    corpo_html = f"<html><body><h2>Novo Edital Encontrado</h2><p><b>{titulo}</b></p><hr><h3>🤖 Resumo:</h3><p>{resumo}</p><hr><a href='{link}'>Acessar Edital</a></body></html>"
+    msg.attach(MIMEText(corpo_html, 'html'))
     try:
-        with smtplib.SMTP('smtp.gmail.com', 587) as s:
-            s.starttls(); s.login(EMAIL_USER, EMAIL_PASS); s.send_message(msg)
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.send_message(msg)
     except Exception as e: print(f"Erro e-mail: {e}")
 
 def gerar_resumo_ia(link):
     try:
         res = requests.get(link, headers=HEADERS, timeout=40, verify=False)
-        texto = ""
         if 'pdf' in res.headers.get('Content-Type', '').lower() or link.lower().endswith('.pdf'):
             with fitz.open(stream=io.BytesIO(res.content), filetype="pdf") as doc:
-                for page in doc[:6]: texto += page.get_text()
+                texto = "".join([page.get_text() for page in doc[:6]])
         else:
             soup = BeautifulSoup(res.text, 'html.parser')
             texto = ' '.join(soup.get_text().split())
-        prompt = f"Analise de forma técnica para a Embrapa: {texto[:8000]}"
+        prompt = f"Resuma os pontos principais deste edital para pesquisadores da Embrapa: {texto[:8000]}"
         return model.generate_content(prompt).text
-    except: return "⚠️ Conteúdo ilegível."
+    except: return "⚠️ Não foi possível ler o conteúdo automaticamente."
 
 def enviar_telegram(mensagem):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -98,11 +102,11 @@ def verificar_palavras_chave(texto):
     texto_min = texto.lower()
     DESCARTAR = ["resultado", "finalizado", "encerrado", "homologação"] 
     if any(desc in texto_min for desc in DESCARTAR): return False
-    return any(palavra.lower() in texto_min for palavra in PALAVRAS_INTERESSE)
+    return any(p.lower() in texto_min for p in PALAVRAS_INTERESSE)
 
 def monitorar():
     vistos = pd.read_csv(DB_FILE)['link'].tolist() if os.path.exists(DB_FILE) else []
-    print(f"[{time.strftime('%H:%M:%S')}] Iniciando...")
+    print(f"[{time.strftime('%H:%M:%S')}] Iniciando monitoramento global...")
     novos_encontrados = []
 
     for site in MAPA_SITES:
@@ -111,32 +115,34 @@ def monitorar():
             res = requests.get(site["url"], headers=HEADERS, timeout=30, verify=False)
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # Na FINEP, cada edital é um <tr> (linha da tabela)
             for item in soup.find_all(site["tag"]):
                 link_tag = item.find('a') if item.name != 'a' else item
                 if not link_tag: continue
                 
                 link = link_tag.get('href', '')
-                # Pegamos o texto da linha inteira (item.get_text) para não perder o nome do edital
-                titulo = item.get_text().replace('\n', ' ').strip()
+                if not link: continue
+
+                # Título inteligente: pega o texto do item inteiro se for FINEP (tabela)
+                titulo = item.get_text().replace('\n', ' ').strip() if site["nome"] == "FINEP" else link_tag.get_text().strip()
                 
+                # Normaliza links
                 if link.startswith('/'): link = site["base_url"] + link
                 elif not link.startswith('http') and site["base_url"]:
                     link = (site["base_url"] + "/" + link).replace("//", "/")
                 
-                # Se o link contém 'chamada' (singular ou plural) e não foi visto
+                # Filtro de link e duplicidade
                 if site["filtro"] in link.lower() and link not in vistos and len(titulo) > 15:
                     if verificar_palavras_chave(titulo):
-                        print(f"🎯 NOVO EDITAL: {titulo}")
+                        print(f"🎯 RELEVANTE: {titulo}")
                         resumo = gerar_resumo_ia(link)
-                        enviar_telegram(f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Acessar]({link})")
+                        enviar_telegram(f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Link]({link})")
                         enviar_email(titulo, resumo, link)
                         
                         novos_encontrados.append([site["nome"], titulo, link])
                         vistos.append(link)
-                        time.sleep(5)
+                        time.sleep(2)
                     else:
-                        # Se não interessa, salvamos para não ler novamente
+                        # Salva no histórico mesmo se não for relevante para não reanalisar
                         vistos.append(link)
                         novos_encontrados.append([site["nome"], titulo, link])
 
