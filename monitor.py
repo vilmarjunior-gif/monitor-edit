@@ -4,18 +4,23 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import google.generativeai as genai
-import fitz  # Biblioteca PyMuPDF (Certifique-se de ter pymupdf no requirements.txt)
+import fitz  # Biblioteca PyMuPDF
 import io
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- CONFIGURAÇÕES DE IA (GEMINI) ---
 gemini_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_key)
-# Usando o modelo estável para evitar erros de "not found"
-model = genai.GenerativeModel('models/gemini-2.5-flash')
+model = genai.GenerativeModel('models/gemini-1.5-flash')
 
 # --- CONFIGURAÇÕES DE ACESSO ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+EMAIL_USER = os.getenv('EMAIL_USER')
+EMAIL_PASS = os.getenv('EMAIL_PASS')
+EMAIL_DESTINO = os.getenv('EMAIL_USER') # Envia para você mesmo
 
 # --- PALAVRAS-CHAVE ---
 PALAVRAS_INTERESSE = [
@@ -26,9 +31,13 @@ PALAVRAS_INTERESSE = [
 ]
 
 MAPA_SITES = [
-    {"nome": "FINEP (Abertas)", "url": "http://www.finep.gov.br/chamadas-publicas/chamadaspublicas?situacao=aberta", "tag": "a", "filtro": "/chamadas-publicas/", "base_url": "http://www.finep.gov.br"},
+    {
+        "nome": "FINEP (Oportunidades)", 
+        "url": "https://www.finep.gov.br/oportunidades", 
+        "tag": "div", "filtro": "chamadas-publicas", "base_url": "https://www.finep.gov.br"
+    },
     {"nome": "FAPEMAT (Abertos)", "url": "https://www.fapemat.mt.gov.br/aberto", "tag": "a", "filtro": "/editais/", "base_url": ""},
-    {"nome": "CNPq (Chamadas)", "url": "http://memoria2.cnpq.br/web/guest/chamadas-publicas", "tag": "a", "filtro": "id=", "base_url": ""},
+    {"nome": "CNPq (Chamadas)", "url": "http://memoria2.cnpq.br/web/guest/chamadas-public-as", "tag": "a", "filtro": "id=", "base_url": ""},
     {"nome": "CAPES (Editais)", "url": "https://www.gov.br/capes/pt-br/assuntos/editais-e-resultados-capes", "tag": "a", "filtro": "editais", "base_url": ""},
     {"nome": "Clima e Sociedade (iCS)", "url": "https://climaesociedade.org/editais/", "tag": "h3", "filtro": "http", "base_url": ""},
     {"nome": "EMBRAPII", "url": "https://embrapii.org.br/transparencia/#chamadas", "tag": "a", "filtro": "chamadas-publicas", "base_url": ""},
@@ -38,31 +47,61 @@ MAPA_SITES = [
 DB_FILE = "historico_editais.csv"
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
+def enviar_email(titulo, resumo, link):
+    if not EMAIL_USER or not EMAIL_PASS:
+        return
+    
+    msg = MIMEMultipart()
+    msg['From'] = EMAIL_USER
+    msg['To'] = EMAIL_DESTINO
+    msg['Subject'] = f"📌 NOVO EDITAL: {titulo[:60]}..."
+
+    corpo_html = f"""
+    <html>
+    <body>
+        <h2>Novo Edital Encontrado</h2>
+        <p><b>Título:</b> {titulo}</p>
+        <hr>
+        <h3>🤖 Resumo da Inteligência Artificial:</h3>
+        <p style="white-space: pre-wrap; background-color: #f9f9f9; padding: 10px; border-left: 5px solid #2ecc71;">{resumo}</p>
+        <hr>
+        <p>🔗 <a href="{link}">Clique aqui para acessar o edital completo</a></p>
+        <br>
+        <small>Monitor de Editais Automático</small>
+    </body>
+    </html>
+    """
+    msg.attach(MIMEText(corpo_html, 'html'))
+
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(EMAIL_USER, EMAIL_PASS)
+            server.send_message(msg)
+    except Exception as e:
+        print(f"Erro ao enviar e-mail: {e}")
+
 def gerar_resumo_ia(link):
     try:
-        # 1. Faz o download com timeout maior
         res = requests.get(link, headers=HEADERS, timeout=40, verify=False)
         content_type = res.headers.get('Content-Type', '').lower()
         texto_para_ia = ""
 
-        # 2. Se for PDF
         if 'pdf' in content_type or link.lower().endswith('.pdf'):
             with fitz.open(stream=io.BytesIO(res.content), filetype="pdf") as doc:
-                for page in doc[:6]: # Primeiras 6 páginas
+                for page in doc[:6]:
                     texto_para_ia += page.get_text()
         else:
-            # 3. Se for página HTML
             soup = BeautifulSoup(res.text, 'html.parser')
             for script in soup(["script", "style"]):
                 script.extract()
             texto_para_ia = ' '.join(soup.get_text().split())
 
-        texto_final = texto_para_ia[:9000] # Limite para a IA
+        texto_final = texto_para_ia[:9000]
 
         if len(texto_final) < 60:
             return "⚠️ O conteúdo do edital não pôde ser lido (página vazia ou protegida)."
 
-        # Ajuste de indentação e correção da variável texto_final
         prompt = (
             f"Analise o conteúdo deste edital e extraia as informações de forma técnica e direta: "
             f"1. OBJETIVO (O que é o edital?)\n"
@@ -105,27 +144,35 @@ def monitorar():
             print(f"Verificando {site['nome']}...")
             res = requests.get(site["url"], headers=HEADERS, timeout=30)
             soup = BeautifulSoup(res.text, 'html.parser')
+            
             for item in soup.find_all(site["tag"]):
-                if item.name == 'h3':
-                    link_tag = item.find('a')
-                    link = link_tag.get('href', '') if link_tag else ''
-                else:
-                    link = item.get('href', '')
+                # Lógica para encontrar link dentro de Div ou H3
+                link_tag = item.find('a') if item.name != 'a' else item
+                if not link_tag: continue
                 
+                link = link_tag.get('href', '')
                 titulo = item.get_text().strip()
+                if not titulo: titulo = link_tag.get_text().strip()
                 
                 if link.startswith('/'): link = site["base_url"] + link
-                elif not link.startswith('http'): link = (site["base_url"] + "/" + link).replace("//", "/") if site["base_url"] else link
+                elif not link.startswith('http'): 
+                    link = (site["base_url"] + "/" + link).replace("//", "/") if site["base_url"] else link
                 
                 if site["filtro"] in link and link not in vistos and len(titulo) > 20:
                     if verificar_palavras_chave(titulo):
-                        print(f"Novo edital: {titulo}")
+                        print(f"Novo edital relevante: {titulo}")
                         resumo = gerar_resumo_ia(link)
+                        
+                        # ENVIO TELEGRAM
                         msg = f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🤖 *Resumo:*\n{resumo}\n\n🔗 [Acessar Edital]({link})"
                         enviar_telegram(msg)
+                        
+                        # ENVIO E-MAIL
+                        enviar_email(titulo, resumo, link)
+                        
                         novos_encontrados.append([site["nome"], titulo, link])
                         vistos.append(link)
-                        time.sleep(3) 
+                        time.sleep(5) 
                     else:
                         novos_encontrados.append([site["nome"], titulo, link])
                         vistos.append(link)
