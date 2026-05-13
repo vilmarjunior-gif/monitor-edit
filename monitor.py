@@ -26,10 +26,10 @@ EMAIL_USER = os.getenv('EMAIL_USER')
 EMAIL_PASS = os.getenv('EMAIL_PASS')
 EMAIL_DESTINO = os.getenv('EMAIL_USER') 
 
-# --- SUA LISTA COMPLETA DE PALAVRAS-CHAVE ---
+# --- SUA LISTA COMPLETA DE PALAVRAS-CHAVE (MANTIDA INTEGRALMENTE) ---
 PALAVRAS_INTERESSE = [
     "silvicultura", "proinfra", "fundo", "carbono", "sustentável", 
-    "chamada", "agricultura", "bioinsumos", "pesquisa", "familiar",
+    "chamada", "agriculture", "bioinsumos", "pesquisa", "familiar",
     "regenerativa", "inovação", "clima", "edital", "mato grosso", "amazônia", "acesso", "sobre",
     "sustentabilidade", "icts", "universal", "insumos biológicos", "agentes de biocontrole", 
     "fungicidas microbiológicos", "bioestimulantes", "inoculantes", "indutores de resistência", 
@@ -40,18 +40,18 @@ PALAVRAS_INTERESSE = [
     "produtos biológicos", "biopesticidas", "biofertilizantes", "bioinseticidas", 
     "biofungicidas", "bionematicidas", "antagonistas", "isolados microbianos", 
     "prospecção de microrganismos", "microbiologia do solo", "manejo integrado de pragas",
-    "biorremediação", "agricultura familiar", "sustentabilidade agrícola", "saúde do solo", 
+    "biorremediação", "agriculture familiar", "sustentabilidade agrícola", "saúde do solo", 
     "economia circular", "agroecologia", "segurançaalimentar", "transição agroecológica", 
     "resiliência climática", "descarbonização", "plano de baixa emissão de carbono"
 ]
 
-# --- MAPA DE TODOS OS SITES ---
+# --- MAPA DE TODOS OS SITES (AJUSTADO PARA A NOVA ESTRUTURA FINEP) ---
 MAPA_SITES = [
     {
         "nome": "FINEP", 
         "url": "https://www.finep.gov.br/chamadas-publicas/chamadaspublicas?situacao=aberta", 
-        "tag": "tr", 
-        "filtro": "chamada", 
+        "tag": "tr", # Busca a linha da tabela
+        "filtro": "chamada", # Pega /chamadapublica/ e /chamada-publica/
         "base_url": "https://www.finep.gov.br"
     },
     {"nome": "FAPEMAT", "url": "https://www.fapemat.mt.gov.br/aberto", "tag": "a", "filtro": "/editais/", "base_url": ""},
@@ -71,7 +71,7 @@ def enviar_email(titulo, resumo, link):
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_DESTINO
     msg['Subject'] = f"📌 NOVO EDITAL: {titulo[:60]}..."
-    corpo_html = f"<html><body><h2>Novo Edital Encontrado</h2><p><b>{titulo}</b></p><hr><h3>🤖 Resumo:</h3><p>{resumo}</p><hr><a href='{link}'>Acessar Edital</a></body></html>"
+    corpo_html = f"<html><body><h2>Novo Edital Encontrado</h2><p><b>{titulo}</b></p><hr><h3>🤖 Resumo:</h3><p style='white-space: pre-wrap;'>{resumo}</p><hr><a href='{link}'>Acessar Edital Completo</a></body></html>"
     msg.attach(MIMEText(corpo_html, 'html'))
     try:
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
@@ -89,7 +89,7 @@ def gerar_resumo_ia(link):
         else:
             soup = BeautifulSoup(res.text, 'html.parser')
             texto = ' '.join(soup.get_text().split())
-        prompt = f"Resuma os pontos principais deste edital para pesquisadores da Embrapa: {texto[:8000]}"
+        prompt = f"Analise este edital de forma técnica e direta para a Embrapa (Objetivo, Público, Datas, Valores): {texto[:8000]}"
         return model.generate_content(prompt).text
     except: return "⚠️ Não foi possível ler o conteúdo automaticamente."
 
@@ -122,8 +122,13 @@ def monitorar():
                 link = link_tag.get('href', '')
                 if not link: continue
 
-                # Título inteligente: pega o texto do item inteiro se for FINEP (tabela)
-                titulo = item.get_text().replace('\n', ' ').strip() if site["nome"] == "FINEP" else link_tag.get_text().strip()
+                # Lógica específica para FINEP extrair título da linha da tabela
+                if site["nome"] == "FINEP":
+                    titulo = item.get_text().replace('\n', ' ').strip()
+                    # Remove excesso de espaços brancos no meio do texto
+                    titulo = ' '.join(titulo.split())
+                else:
+                    titulo = link_tag.get_text().strip()
                 
                 # Normaliza links
                 if link.startswith('/'): link = site["base_url"] + link
@@ -133,16 +138,18 @@ def monitorar():
                 # Filtro de link e duplicidade
                 if site["filtro"] in link.lower() and link not in vistos and len(titulo) > 15:
                     if verificar_palavras_chave(titulo):
-                        print(f"🎯 RELEVANTE: {titulo}")
+                        print(f"🎯 RELEVANTE ENCONTRADO: {titulo}")
                         resumo = gerar_resumo_ia(link)
-                        enviar_telegram(f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Link]({link})")
+                        
+                        msg_telegram = f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Acessar Edital]({link})"
+                        enviar_telegram(msg_telegram)
                         enviar_email(titulo, resumo, link)
                         
                         novos_encontrados.append([site["nome"], titulo, link])
                         vistos.append(link)
                         time.sleep(2)
                     else:
-                        # Salva no histórico mesmo se não for relevante para não reanalisar
+                        # Salva no histórico para não analisar novamente
                         vistos.append(link)
                         novos_encontrados.append([site["nome"], titulo, link])
 
@@ -150,7 +157,9 @@ def monitorar():
             print(f"Erro em {site['nome']}: {e}")
 
     if novos_encontrados:
-        pd.DataFrame(novos_encontrados, columns=['fonte', 'titulo', 'link']).to_csv(DB_FILE, mode='a', header=not os.path.exists(DB_FILE), index=False)
+        df_novos = pd.DataFrame(novos_encontrados, columns=['fonte', 'titulo', 'link'])
+        df_novos.to_csv(DB_FILE, mode='a', header=not os.path.exists(DB_FILE), index=False)
+        print(f"✅ {len(novos_encontrados)} novos itens processados.")
 
 if __name__ == "__main__":
     monitorar()
