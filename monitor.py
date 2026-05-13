@@ -13,21 +13,28 @@ from email.mime.multipart import MIMEMultipart
 # --- CONFIGURAÇÕES DE IA (GEMINI) ---
 gemini_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_key)
-model = genai.GenerativeModel('models/gemini-1.5-flash')
+model = genai.GenerativeModel('models/gemini-2.5-flash')
 
 # --- CONFIGURAÇÕES DE ACESSO ---
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 EMAIL_USER = os.getenv('EMAIL_USER')
 EMAIL_PASS = os.getenv('EMAIL_PASS')
-EMAIL_DESTINO = os.getenv('EMAIL_USER') # Envia para você mesmo
+EMAIL_DESTINO = os.getenv('EMAIL_USER') 
 
 # --- PALAVRAS-CHAVE ---
 PALAVRAS_INTERESSE = [
     "silvicultura", "proinfra", "fundo", "carbono", "sustentável", 
     "chamada", "agricultura", "bioinsumos", "pesquisa", "familiar",
     "regenerativa", "inovação", "clima", "edital", "mato grosso", "amazônia", "acesso", "sobre",
-    "sustentabilidade", "ICTs", "universal"
+    "sustentabilidade" , "ICTs" , "universal" , "Insumos biológicos" , "Agentes de biocontrole" , "Fungicidas microbiológicos" , "Bioestimulantes",
+    "Inoculantes" , "Indutores de resistência" , "Microbiota do solo" , "Solubilizadores de fosfato" , "Fixação biológica de nitrogênio", "Metabólitos secundários", 
+    "Ediçãogênica" , "CRISPR-Cas9", "Bioeconomia" , "Promotores de crescimento" , "Doenças emergentes” , “Manejo sustentável” ,
+    "Sustentabilidade" , "Bioinsumos" , "Agentes Biológicos" , "Controle Biológico" , "Produtos biológicos" , "Biopesticidas",
+    "Biofertilizantes" , "Bioinseticidas" , "Biofungicidas" , "Bionematicidas",
+    "Antagonistas" , "Isolados microbianos" , "Prospecção de microrganismos" , "Microbiologia do solo" , "Manejo integrado de pragas",
+    "Biorremediação" , "Agricultura familiar" , "Sustentabilidade agrícola" , "Saúde do solo" , "Economia circular" , "Agroecologia" , "Segurançaalimentar" , "Transição agroecológica", "Resiliência Climática",
+    "Descarbonização" , "Plano de Baixa Emissão de Carbono".
 ]
 
 MAPA_SITES = [
