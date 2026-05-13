@@ -13,7 +13,6 @@ from email.mime.multipart import MIMEMultipart
 # --- CONFIGURAÇÕES DE IA (GEMINI) ---
 gemini_key = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=gemini_key)
-# Ajustado para 1.5 que é a versão estável gratuita
 model = genai.GenerativeModel('models/gemini-1.5-flash')
 
 # --- CONFIGURAÇÕES DE ACESSO ---
@@ -27,7 +26,7 @@ EMAIL_DESTINO = os.getenv('EMAIL_USER')
 PALAVRAS_INTERESSE = [
     "silvicultura", "proinfra", "fundo", "carbono", "sustentável", 
     "chamada", "agricultura", "bioinsumos", "pesquisa", "familiar",
-    "regenerativa", "inovação", "clima", "edital", "mato grosso", "amazônia", "acesso", "sobre",
+    "regenerativa", "inovação", "clima", "edital", "mato grosso", "amazônia", "acesso",
     "sustentabilidade", "icts", "universal", "insumos biológicos", "agentes de biocontrole", 
     "fungicidas microbiológicos", "bioestimulantes", "inoculantes", "indutores de resistência", 
     "microbiota do solo", "solubilizadores de fosfato", "fixação biológica de nitrogênio", 
@@ -44,9 +43,11 @@ PALAVRAS_INTERESSE = [
 
 MAPA_SITES = [
     {
-        "nome": "FINEP (Chamadas Abertas)", 
+        "nome": "FINEP (Chamadas)", 
         "url": "https://www.finep.gov.br/chamadas-publicas/chamadaspublicas?situacao=aberta", 
-        "tag": "a", "filtro": "chamada", "base_url": "https://www.finep.gov.br"
+        "tag": "tr", # Mudado para TR para ler a linha da tabela
+        "filtro": "chamada", # Filtro mais amplo (pega singular e plural)
+        "base_url": "https://www.finep.gov.br"
     },
     {"nome": "FAPEMAT (Abertos)", "url": "https://www.fapemat.mt.gov.br/aberto", "tag": "a", "filtro": "/editais/", "base_url": ""},
     {"nome": "CNPq (Chamadas)", "url": "http://memoria2.cnpq.br/web/guest/chamadas-public-as", "tag": "a", "filtro": "id=", "base_url": ""},
@@ -154,24 +155,33 @@ def monitorar():
     for site in MAPA_SITES:
         try:
             print(f"Verificando {site['nome']}...")
-            res = requests.get(site["url"], headers=HEADERS, timeout=30)
+            res = requests.get(site["url"], headers=HEADERS, timeout=30, verify=False)
             soup = BeautifulSoup(res.text, 'html.parser')
             
             for item in soup.find_all(site["tag"]):
+                # Busca link dentro do item (TR ou Div)
                 link_tag = item.find('a') if item.name != 'a' else item
                 if not link_tag: continue
                 
                 link = link_tag.get('href', '')
-                titulo = item.get_text().strip()
+                
+                # Se for FINEP, pegamos o texto da linha inteira para garantir o título
+                if "finep.gov.br" in site["url"]:
+                    titulo = item.get_text().replace('\n', ' ').strip()
+                else:
+                    titulo = item.get_text().strip()
+                
                 if not titulo: titulo = link_tag.get_text().strip()
                 
-                if link.startswith('/'): link = site["base_url"] + link
-                elif not link.startswith('http'): 
-                    link = (site["base_url"] + "/" + link).replace("//", "/") if site["base_url"] else link
+                # Normalização do Link
+                if link.startswith('/'): 
+                    link = site["base_url"] + link
+                elif not link.startswith('http') and site["base_url"]:
+                    link = (site["base_url"] + "/" + link).replace("//", "/")
                 
-                if site["filtro"] in link and link not in vistos and len(titulo) > 20:
+                if site["filtro"] in link and link not in vistos and len(titulo) > 15:
                     if verificar_palavras_chave(titulo):
-                        print(f"Novo edital relevante: {titulo}")
+                        print(f"Novo edital relevante encontrado: {titulo}")
                         resumo = gerar_resumo_ia(link)
                         
                         # ENVIO TELEGRAM
@@ -185,13 +195,16 @@ def monitorar():
                         vistos.append(link)
                         time.sleep(5) 
                     else:
-                        novos_encontrados.append([site["nome"], titulo, link])
+                        # Adiciona ao histórico mesmo se não for relevante para não ler de novo
                         vistos.append(link)
+                        novos_encontrados.append([site["nome"], titulo, link])
+
         except Exception as e:
             print(f"Erro em {site['nome']}: {e}")
 
     if novos_encontrados:
-        pd.DataFrame(novos_encontrados, columns=['fonte', 'titulo', 'link']).to_csv(DB_FILE, mode='a', header=not os.path.exists(DB_FILE), index=False)
+        df_novos = pd.DataFrame(novos_encontrados, columns=['fonte', 'titulo', 'link'])
+        df_novos.to_csv(DB_FILE, mode='a', header=not os.path.exists(DB_FILE), index=False)
 
 if __name__ == "__main__":
     monitorar()
