@@ -44,9 +44,9 @@ PALAVRAS_INTERESSE = [
 
 MAPA_SITES = [
     {
-        "nome": "FINEP (Oportunidades)", 
-        "url": "https://www.finep.gov.br/oportunidades", 
-        "tag": "div", "filtro": "chamadas-publicas", "base_url": "https://www.finep.gov.br"
+        "nome": "FINEP (Chamadas Abertas)", 
+        "url": "https://www.finep.gov.br/chamadas-publicas/chamadaspublicas?situacao=aberta", 
+        "tag": "tr", "filtro": "chamadas-publicas", "base_url": "https://www.finep.gov.br"
     },
     {"nome": "FAPEMAT (Abertos)", "url": "https://www.fapemat.mt.gov.br/aberto", "tag": "a", "filtro": "/editais/", "base_url": ""},
     {"nome": "CNPq (Chamadas)", "url": "http://memoria2.cnpq.br/web/guest/chamadas-public-as", "tag": "a", "filtro": "id=", "base_url": ""},
