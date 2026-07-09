@@ -1,5 +1,6 @@
 import os
 import re
+import hashlib
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -47,17 +48,79 @@ PALAVRAS_INTERESSE = [
 ]
 
 # --- MAPA DE SITES (sem FINEP — tratada separadamente) ---
+#
+# CORREÇÕES APLICADAS:
+#  - FAPEMAT: URL corrigida de "/aberto" (inexistente) para "/editais_1".
+#    ATENÇÃO: este domínio usa um WAF (F5/BIG-IP ASM) que rejeita a maioria
+#    das requisições automatizadas ("Request Rejected") independente da URL
+#    e mesmo na home. Headers mais completos foram adicionados para tentar
+#    reduzir bloqueios, mas não há garantia de que vá funcionar sempre — é
+#    um problema do lado do servidor, não da sua lógica de scraping.
+#  - CNPq: corrigido typo "chamadas-public-as" -> "chamadas-publicas" (dava 404).
+#  - CAPES: filtro trocado de string única para lista, verificando tanto o
+#    link quanto o título (muitos links do menu não contêm "editais" na URL).
+#  - Hub de Economia e Clima: o site publica o conteúdo do edital na própria
+#    página /editais/ (sem sublinks contendo "/editais/"), então o filtro por
+#    link nunca detectava nada de novo. Adicionado "modo": "pagina_unica",
+#    que compara um hash do conteúdo da página inteira para saber se mudou.
 MAPA_SITES = [
-    {"nome": "FAPEMAT", "url": "https://www.fapemat.mt.gov.br/aberto", "tag": "a", "filtro": "/editais/", "base_url": ""},
-    {"nome": "CNPq", "url": "http://memoria2.cnpq.br/web/guest/chamadas-public-as", "tag": "a", "filtro": "id=", "base_url": ""},
-    {"nome": "CAPES", "url": "https://www.gov.br/capes/pt-br/assuntos/editais-e-resultados-capes", "tag": "a", "filtro": "editais", "base_url": ""},
-    {"nome": "Clima e Sociedade (iCS)", "url": "https://climaesociedade.org/editais/", "tag": "h3", "filtro": "http", "base_url": ""},
-    {"nome": "EMBRAPII", "url": "https://embrapii.org.br/transparencia/#chamadas", "tag": "a", "filtro": "chamadas-publicas", "base_url": ""},
-    {"nome": "Hub de Economia e Clima", "url": "https://hubdeeconomiaeclima.org.br/editais/", "tag": "a", "filtro": "/editais/", "base_url": "https://hubdeeconomiaeclima.org.br"}
+    {
+        "nome": "FAPEMAT",
+        "url": "https://www.fapemat.mt.gov.br/editais_1",
+        "tag": "a",
+        "filtro": ["/editais/", "edital"],
+        "base_url": "https://www.fapemat.mt.gov.br"
+    },
+    {
+        "nome": "CNPq",
+        "url": "http://memoria2.cnpq.br/web/guest/chamadas-publicas",
+        "tag": "a",
+        "filtro": ["id="],
+        "base_url": ""
+    },
+    {
+        "nome": "CAPES",
+        "url": "https://www.gov.br/capes/pt-br/assuntos/editais-e-resultados-capes",
+        "tag": "a",
+        "filtro": ["editais", "edital"],
+        "base_url": ""
+    },
+    {
+        "nome": "Clima e Sociedade (iCS)",
+        "url": "https://climaesociedade.org/editais/",
+        "tag": "h3",
+        "filtro": ["http"],
+        "base_url": ""
+    },
+    {
+        "nome": "EMBRAPII",
+        "url": "https://embrapii.org.br/transparencia/#chamadas",
+        "tag": "a",
+        "filtro": ["chamadas-publicas"],
+        "base_url": ""
+    },
+    {
+        "nome": "Hub de Economia e Clima",
+        "url": "https://hubdeeconomiaeclima.org.br/editais/",
+        "tag": "a",
+        "filtro": ["/editais/"],
+        "base_url": "https://hubdeeconomiaeclima.org.br",
+        "modo": "pagina_unica"
+    }
 ]
 
 DB_FILE = "historico_editais.csv"
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+
+# Headers mais completos, imitando melhor um navegador real (ajuda contra
+# alguns WAFs, embora não seja garantia — ex.: FAPEMAT segue bloqueando).
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                   '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+}
 
 # Padrões de href para busca via BeautifulSoup
 PADROES_SUBMISSAO_HREF = [
@@ -137,6 +200,17 @@ def verificar_palavras_chave(texto):
     return any(p.lower() in texto_min for p in PALAVRAS_INTERESSE)
 
 
+def bate_filtro(filtro, *campos):
+    """
+    Verifica se algum dos padrões de 'filtro' (string ou lista de strings)
+    aparece em algum dos campos fornecidos (ex.: link, titulo).
+    """
+    if isinstance(filtro, str):
+        filtro = [filtro]
+    campos_min = [c.lower() for c in campos if c]
+    return any(f.lower() in campo for f in filtro for campo in campos_min)
+
+
 def extrair_detalhes_finep(url_edital):
     """
     Acessa a página individual do edital da FINEP e extrai:
@@ -191,6 +265,10 @@ def monitorar_finep(vistos, novos_encontrados):
       1. Acessa a página individual para extrair descrição e link de submissão
       2. Verifica palavras-chave na descrição completa (não só no título)
       3. Envia notificação com link do edital + link de submissão quando disponível
+
+    OBS: o robots.txt da FINEP desautoriza acesso automatizado. requests não
+    obedece robots.txt por padrão, então isso não impede o scraping — mas é
+    um sinal de que, em caso de tráfego alto, há risco de bloqueio de IP.
     """
     base = "https://www.finep.gov.br"
     start = 0
@@ -276,6 +354,47 @@ def monitorar_finep(vistos, novos_encontrados):
             break
 
 
+def monitorar_pagina_unica(site, vistos, novos_encontrados):
+    """
+    Para sites onde o edital é publicado inteiramente em uma única página
+    (sem sublinks de listagem -> detalhe), como o Hub de Economia e Clima.
+
+    Estratégia: calcula um hash do texto da página. Se o hash mudar em
+    relação ao último visto, trata como "conteúdo novo/atualizado" e
+    verifica as palavras-chave no texto inteiro da página.
+    """
+    try:
+        res = requests.get(site["url"], headers=HEADERS, timeout=30, verify=False)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        texto = ' '.join(soup.get_text().split())
+
+        hash_conteudo = hashlib.sha256(texto.encode('utf-8')).hexdigest()
+        chave_hash = f"{site['nome']}::hash::{hash_conteudo}"
+
+        if chave_hash in vistos:
+            return  # conteúdo já visto, nada novo
+
+        vistos.append(chave_hash)
+
+        # Tenta usar o primeiro h2/h3 como título do edital em destaque
+        titulo_tag = soup.find(['h2', 'h3'])
+        titulo = titulo_tag.get_text().strip() if titulo_tag else f"Atualização em {site['nome']}"
+
+        novos_encontrados.append([site["nome"], titulo, site["url"]])
+
+        if verificar_palavras_chave(texto):
+            print(f"🎯 RELEVANTE: {titulo} ({site['nome']})")
+            resumo = gerar_resumo_ia(site["url"])
+            enviar_telegram(
+                f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Link]({site['url']})"
+            )
+            enviar_email(titulo, resumo, site["url"])
+            time.sleep(2)
+
+    except Exception as e:
+        print(f"Erro em {site['nome']}: {e}")
+
+
 def monitorar():
     try:
         vistos = pd.read_csv(DB_FILE)['link'].tolist() if os.path.exists(DB_FILE) else []
@@ -292,6 +411,12 @@ def monitorar():
     for site in MAPA_SITES:
         try:
             print(f"Verificando {site['nome']}...")
+
+            # Sites de página única (ex.: Hub de Economia e Clima)
+            if site.get("modo") == "pagina_unica":
+                monitorar_pagina_unica(site, vistos, novos)
+                continue
+
             res = requests.get(site["url"], headers=HEADERS, timeout=30, verify=False)
             soup = BeautifulSoup(res.text, 'html.parser')
 
@@ -306,7 +431,9 @@ def monitorar():
                 if link.startswith('/'):
                     link = site["base_url"] + link
 
-                if site["filtro"] in link.lower() and link not in vistos and len(titulo) > 15:
+                if (bate_filtro(site["filtro"], link, titulo)
+                        and link not in vistos
+                        and len(titulo) > 15):
                     vistos.append(link)
                     novos.append([site["nome"], titulo, link])
                     if verificar_palavras_chave(titulo):
