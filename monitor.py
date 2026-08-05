@@ -43,7 +43,7 @@ PALAVRAS_INTERESSE = [
     "manejo integrado de pragas", "biorremediação", "agricultura familiar",
     "sustentabilidade agrícola", "saúde do solo", "economia circular", "agroecologia",
     "segurançaalimentar", "transição agroecológica", "resiliência climática",
-    "descarbonização", "plano de baixa emissão de carbono"
+    "descarbonização", "plano de baixa emissão de carbono", "entomologia", "pragas", "agroecologia", "sanidade vegetal", "controle biológico"
 ]
 
 # --- MAPA DE SITES (sem FINEP — tratada separadamente) ---
