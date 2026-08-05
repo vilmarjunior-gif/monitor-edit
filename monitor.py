@@ -25,7 +25,9 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 EMAIL_USER = os.getenv('EMAIL_USER')
 EMAIL_PASS = os.getenv('EMAIL_PASS')
-EMAIL_DESTINO = os.getenv('EMAIL_USER')
+
+# Busca a secret 'EMAIL_DESTINO'. Se não existir, usa o 'EMAIL_USER' como padrão.
+EMAIL_DESTINO = os.getenv('EMAIL_DESTINO', os.getenv('EMAIL_USER'))
 
 # --- PALAVRAS-CHAVE ---
 PALAVRAS_INTERESSE = [
@@ -44,10 +46,10 @@ PALAVRAS_INTERESSE = [
     "sustentabilidade agrícola", "saúde do solo", "economia circular", "agroecologia",
     "segurançaalimentar", "transição agroecológica", "resiliência climática",
     "descarbonização", "plano de baixa emissão de carbono", "entomologia", "pragas",
-    "agroecologia", "sanidade vegetal", "controle biológico"
+    "sanidade vegetal"
 ]
 
-# --- MAPA DE SITES (sem FINEP — tratada separadamente) ---
+# --- MAPA DE SITES (sem FINEP — tratada separadamente via API) ---
 MAPA_SITES = [
     {
         "nome": "FAPEMAT",
@@ -107,13 +109,17 @@ HEADERS = {
 
 
 def enviar_email(titulo, resumo, link):
-    if not EMAIL_USER or not EMAIL_PASS:
+    if not EMAIL_USER or not EMAIL_PASS or not EMAIL_DESTINO:
         return
+
+    # Prepara lista de destinatários caso haja múltiplos e-mails separados por vírgula
+    destinatarios = [e.strip() for e in EMAIL_DESTINO.split(",")] if isinstance(EMAIL_DESTINO, str) else EMAIL_DESTINO
+
     msg = MIMEMultipart()
     msg['From'] = EMAIL_USER
-    msg['To'] = EMAIL_DESTINO
+    msg['To'] = EMAIL_DESTINO if isinstance(EMAIL_DESTINO, str) else ", ".join(EMAIL_DESTINO)
     msg['Subject'] = f"📌 NOVO EDITAL: {titulo[:60]}..."
-    
+
     corpo_html = f"""
     <html>
       <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
@@ -130,17 +136,18 @@ def enviar_email(titulo, resumo, link):
             🔗 Acessar Edital Completo
           </a>
         </p>
-        <p style="font-size: 12px; color: #777;">Link direto: <a href="{link}">{link}</a></p>
+        <p style="font-size: 12px; color: #777; text-align: center;">Link direto: <a href="{link}">{link}</a></p>
       </body>
     </html>
     """
     msg.attach(MIMEText(corpo_html, 'html'))
+
     try:
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()
             server.login(EMAIL_USER, EMAIL_PASS)
-            server.send_message(msg)
-            print(f"E-mail enviado para {EMAIL_DESTINO}")
+            server.send_message(msg, to_addrs=destinatarios)
+            print(f"E-mail enviado para: {EMAIL_DESTINO}")
     except Exception as e:
         print(f"Erro e-mail: {e}")
 
@@ -159,17 +166,19 @@ def gerar_resumo_ia(link, titulo_reserva="Edital"):
             texto = ' '.join(soup.get_text().split())
 
         if len(texto.strip()) < 100:
-            return f"📌 **{titulo_reserva}**\n\n*(Acesse o link direto abaixo para visualizar as informações no portal oficial).* "
+            return f"📌 **{titulo_reserva}**\n\n*(Acesse o link direto no botão abaixo para visualizar todas as informações no portal oficial).* "
 
         return model.generate_content(
             f"Resuma este edital para a Embrapa em até 4 tópicos curtos (Objetivo, Público, Datas, Valores): {texto[:8000]}"
         ).text
     except Exception as e:
         print(f"Erro na IA para {link}: {e}")
-        return f"📌 **{titulo_reserva}**\n\n*(Acesse o edital pelo link abaixo para conferir os detalhes).* "
+        return f"📌 **{titulo_reserva}**\n\n*(Acesse o edital pelo link direto no botão abaixo para conferir os detalhes).* "
 
 
 def enviar_telegram(mensagem):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         requests.post(
@@ -177,8 +186,8 @@ def enviar_telegram(mensagem):
             data={"chat_id": TELEGRAM_CHAT_ID, "text": mensagem, "parse_mode": "Markdown"},
             timeout=10
         )
-    except:
-        pass
+    except Exception as e:
+        print(f"Erro Telegram: {e}")
 
 
 def verificar_palavras_chave(texto):
