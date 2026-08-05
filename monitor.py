@@ -71,19 +71,19 @@ MAPA_SITES = [
         "filtro": ["/editais/", "edital"],
         "base_url": "https://www.fapemat.mt.gov.br"
     },
-    {
+  {
         "nome": "CNPq",
-        "url": "http://memoria2.cnpq.br/web/guest/chamadas-publicas",
+        "url": "https://www.gov.br/cnpq/pt-br/chamadas/abertas-para-submissao",
         "tag": "a",
-        "filtro": ["id="],
-        "base_url": ""
+        "filtro": ["chamada", "chamadas"], 
+        "base_url": "https://www.gov.br"
     },
     {
         "nome": "CAPES",
         "url": "https://www.gov.br/capes/pt-br/assuntos/editais-e-resultados-capes",
         "tag": "a",
         "filtro": ["editais", "edital"],
-        "base_url": ""
+        "base_url": "[https://www.gov.br](https://www.gov.br)"
     },
     {
         "nome": "Clima e Sociedade (iCS)",
@@ -92,12 +92,12 @@ MAPA_SITES = [
         "filtro": ["http"],
         "base_url": ""
     },
-    {
+   {
         "nome": "EMBRAPII",
-        "url": "https://embrapii.org.br/transparencia/#chamadas",
+        "url": "https://embrapii.org.br/transparencia/", 
         "tag": "a",
-        "filtro": ["chamadas-publicas"],
-        "base_url": ""
+        "filtro": ["chamada", "documento", "edital"], # Filtro mais brando
+        "base_url": "https://embrapii.org.br" # É bom garantir a base_url
     },
     {
         "nome": "Hub de Economia e Clima",
