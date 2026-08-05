@@ -43,7 +43,8 @@ PALAVRAS_INTERESSE = [
     "manejo integrado de pragas", "biorremediação", "agricultura familiar",
     "sustentabilidade agrícola", "saúde do solo", "economia circular", "agroecologia",
     "segurançaalimentar", "transição agroecológica", "resiliência climática",
-    "descarbonização", "plano de baixa emissão de carbono", "entomologia", "pragas", "agroecologia", "sanidade vegetal", "controle biológico"
+    "descarbonização", "plano de baixa emissão de carbono", "entomologia", "pragas",
+    "agroecologia", "sanidade vegetal", "controle biológico"
 ]
 
 # --- MAPA DE SITES (sem FINEP — tratada separadamente) ---
@@ -112,39 +113,60 @@ def enviar_email(titulo, resumo, link):
     msg['From'] = EMAIL_USER
     msg['To'] = EMAIL_DESTINO
     msg['Subject'] = f"📌 NOVO EDITAL: {titulo[:60]}..."
-    corpo_html = (
-        f"<html><body>"
-        f"<h2>Novo Edital Encontrado</h2>"
-        f"<p><b>{titulo}</b></p>"
-        f"<hr><h3>🤖 Resumo:</h3>"
-        f"<p style='white-space: pre-wrap;'>{resumo}</p>"
-        f"<hr><a href='{link}'>Acessar Edital Completo</a>"
-        f"</body></html>"
-    )
+    
+    corpo_html = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+        <h2 style="color: #0056b3;">Novo Edital Encontrado</h2>
+        <p style="font-size: 16px;"><b>{titulo}</b></p>
+        <hr>
+        <h3>🤖 Resumo:</h3>
+        <div style="background: #f4f4f4; padding: 12px; border-left: 4px solid #0056b3; white-space: pre-wrap;">
+          {resumo}
+        </div>
+        <br>
+        <p style="text-align: center;">
+          <a href="{link}" target="_blank" style="background-color: #0056b3; color: white; padding: 12px 20px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+            🔗 Acessar Edital Completo
+          </a>
+        </p>
+        <p style="font-size: 12px; color: #777;">Link direto: <a href="{link}">{link}</a></p>
+      </body>
+    </html>
+    """
     msg.attach(MIMEText(corpo_html, 'html'))
     try:
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()
             server.login(EMAIL_USER, EMAIL_PASS)
             server.send_message(msg)
+            print(f"E-mail enviado para {EMAIL_DESTINO}")
     except Exception as e:
         print(f"Erro e-mail: {e}")
 
 
-def gerar_resumo_ia(link):
+def gerar_resumo_ia(link, titulo_reserva="Edital"):
     try:
-        res = requests.get(link, headers=HEADERS, timeout=40, verify=False)
+        res = requests.get(link, headers=HEADERS, timeout=30, verify=False)
+        texto = ""
         if 'pdf' in res.headers.get('Content-Type', '').lower() or link.lower().endswith('.pdf'):
             with fitz.open(stream=io.BytesIO(res.content), filetype="pdf") as doc:
                 texto = "".join([page.get_text() for page in doc[:6]])
         else:
             soup = BeautifulSoup(res.text, 'html.parser')
+            for script in soup(["script", "style"]):
+                script.decompose()
             texto = ' '.join(soup.get_text().split())
+
+        if len(texto.strip()) < 100:
+            return f"📌 **{titulo_reserva}**\n\n*(Acesse o link direto abaixo para visualizar as informações no portal oficial).* "
+
         return model.generate_content(
-            f"Resuma este edital para a Embrapa (Foco: Objetivo, Público, Datas, Valores): {texto[:8000]}"
+            f"Resuma este edital para a Embrapa em até 4 tópicos curtos (Objetivo, Público, Datas, Valores): {texto[:8000]}"
         ).text
-    except:
-        return "⚠️ Não foi possível ler o conteúdo automaticamente."
+    except Exception as e:
+        print(f"Erro na IA para {link}: {e}")
+        return f"📌 **{titulo_reserva}**\n\n*(Acesse o edital pelo link abaixo para conferir os detalhes).* "
 
 
 def enviar_telegram(mensagem):
@@ -174,9 +196,6 @@ def bate_filtro(filtro, *campos):
 
 
 def monitorar_finep(vistos, novos_encontrados):
-    """
-    Monitora o novo portal da FINEP consumindo a API JSON, lidando com a paginação.
-    """
     print("Verificando FINEP (Nova API)...")
     pagina = 1
     tem_mais_paginas = True
@@ -186,7 +205,6 @@ def monitorar_finep(vistos, novos_encontrados):
         
         try:
             res = requests.get(url_api, headers=HEADERS, timeout=30, verify=False)
-            
             if res.status_code != 200:
                 print(f"  FINEP: Falha ao acessar a página {pagina} (Status: {res.status_code}).")
                 break
@@ -195,13 +213,12 @@ def monitorar_finep(vistos, novos_encontrados):
             lista_editais = dados.get('items', [])
             
             if not lista_editais:
-                break # Encerra se a página vier sem itens
+                break
 
             for edital in lista_editais:
                 titulo = edital.get('titulo') or edital.get('nome') or "Oportunidade FINEP Sem Título"
                 id_chamada = edital.get('id')
                 
-                # Monta o link para o painel de oportunidades do novo site
                 link_final = f"https://www.finep.gov.br/oportunidades?id={id_chamada}" if id_chamada else "https://www.finep.gov.br/oportunidades"
 
                 if link_final in vistos:
@@ -210,7 +227,6 @@ def monitorar_finep(vistos, novos_encontrados):
                 print(f"  Novo edital: {titulo}")
                 vistos.append(link_final)
 
-                # Extrai dados da API para o filtro de palavras-chave
                 objetivo = edital.get('objetivo', '')
                 condicao = edital.get('condicaoDeFinanciamento', '')
                 publico = edital.get('publico', '')
@@ -221,23 +237,18 @@ def monitorar_finep(vistos, novos_encontrados):
                 if verificar_palavras_chave(texto_completo):
                     print(f"  🎯 FINEP RELEVANTE: {titulo}")
                     
-                    # Usa o próprio texto retornado pela API para o Gemini resumir (muito mais limpo)
                     resumo = model.generate_content(
-                        f"Resuma este edital para a Embrapa (Foco: Objetivo, Público, Datas, Valores). Dados brutos: {texto_completo[:8000]}"
-                    ).text if texto_completo.strip() else "Resumo não disponível automaticamente."
+                        f"Resuma este edital para a Embrapa (Foco: Objetivo, Público, Datas, Valores). Dados: {texto_completo[:8000]}"
+                    ).text if texto_completo.strip() else f"Oportunidade FINEP: {titulo}"
 
-                    msg = (
-                        f"🔔 *NOVO EDITAL (FINEP)*\n\n"
-                        f"📄 *{titulo}*\n\n"
-                        f"🔗 [Acessar Oportunidade]({link_final})"
-                    )
+                    msg = f"🔔 *NOVO EDITAL (FINEP)*\n\n📄 *{titulo}*\n\n🔗 [Acessar Oportunidade]({link_final})"
 
                     enviar_telegram(msg)
                     enviar_email(titulo, resumo, link_final)
                     time.sleep(2)
 
             pagina += 1
-            time.sleep(1) # Pausa amigável entre páginas
+            time.sleep(1)
 
         except Exception as e:
             print(f"  Erro FINEP (página {pagina}): {e}")
@@ -265,10 +276,8 @@ def monitorar_pagina_unica(site, vistos, novos_encontrados):
 
         if verificar_palavras_chave(texto):
             print(f"🎯 RELEVANTE: {titulo} ({site['nome']})")
-            resumo = gerar_resumo_ia(site["url"])
-            enviar_telegram(
-                f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Link]({site['url']})"
-            )
+            resumo = gerar_resumo_ia(site["url"], titulo)
+            enviar_telegram(f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Acessar Edital]({site['url']})")
             enviar_email(titulo, resumo, site["url"])
             time.sleep(2)
 
@@ -285,7 +294,7 @@ def monitorar():
     print(f"[{time.strftime('%H:%M:%S')}] Iniciando monitoramento...")
     novos = []
 
-    # --- FINEP: Nova rotina de API ---
+    # --- FINEP ---
     monitorar_finep(vistos, novos)
 
     # --- Demais sites ---
@@ -319,10 +328,8 @@ def monitorar():
                     
                     if verificar_palavras_chave(titulo):
                         print(f"🎯 RELEVANTE: {titulo}")
-                        resumo = gerar_resumo_ia(link)
-                        enviar_telegram(
-                            f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Link]({link})"
-                        )
+                        resumo = gerar_resumo_ia(link, titulo)
+                        enviar_telegram(f"🔔 *NOVO EDITAL ({site['nome']})*\n\n📄 *{titulo}*\n\n🔗 [Acessar Edital]({link})")
                         enviar_email(titulo, resumo, link)
                         time.sleep(2)
 
