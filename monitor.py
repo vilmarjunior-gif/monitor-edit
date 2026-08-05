@@ -1,5 +1,4 @@
 import os
-import re
 import hashlib
 import requests
 from bs4 import BeautifulSoup
@@ -48,21 +47,6 @@ PALAVRAS_INTERESSE = [
 ]
 
 # --- MAPA DE SITES (sem FINEP — tratada separadamente) ---
-#
-# CORREÇÕES APLICADAS:
-#  - FAPEMAT: URL corrigida de "/aberto" (inexistente) para "/editais_1".
-#    ATENÇÃO: este domínio usa um WAF (F5/BIG-IP ASM) que rejeita a maioria
-#    das requisições automatizadas ("Request Rejected") independente da URL
-#    e mesmo na home. Headers mais completos foram adicionados para tentar
-#    reduzir bloqueios, mas não há garantia de que vá funcionar sempre — é
-#    um problema do lado do servidor, não da sua lógica de scraping.
-#  - CNPq: corrigido typo "chamadas-public-as" -> "chamadas-publicas" (dava 404).
-#  - CAPES: filtro trocado de string única para lista, verificando tanto o
-#    link quanto o título (muitos links do menu não contêm "editais" na URL).
-#  - Hub de Economia e Clima: o site publica o conteúdo do edital na própria
-#    página /editais/ (sem sublinks contendo "/editais/"), então o filtro por
-#    link nunca detectava nada de novo. Adicionado "modo": "pagina_unica",
-#    que compara um hash do conteúdo da página inteira para saber se mudou.
 MAPA_SITES = [
     {
         "nome": "FAPEMAT",
@@ -71,7 +55,7 @@ MAPA_SITES = [
         "filtro": ["/editais/", "edital"],
         "base_url": "https://www.fapemat.mt.gov.br"
     },
-  {
+    {
         "nome": "CNPq",
         "url": "https://www.gov.br/cnpq/pt-br/chamadas/abertas-para-submissao",
         "tag": "a",
@@ -83,7 +67,7 @@ MAPA_SITES = [
         "url": "https://www.gov.br/capes/pt-br/assuntos/editais-e-resultados-capes",
         "tag": "a",
         "filtro": ["editais", "edital"],
-        "base_url": "[https://www.gov.br](https://www.gov.br)"
+        "base_url": "https://www.gov.br"
     },
     {
         "nome": "Clima e Sociedade (iCS)",
@@ -92,12 +76,12 @@ MAPA_SITES = [
         "filtro": ["http"],
         "base_url": ""
     },
-   {
+    {
         "nome": "EMBRAPII",
         "url": "https://embrapii.org.br/transparencia/", 
         "tag": "a",
-        "filtro": ["chamada", "documento", "edital"], # Filtro mais brando
-        "base_url": "https://embrapii.org.br" # É bom garantir a base_url
+        "filtro": ["chamada", "edital"],
+        "base_url": "https://embrapii.org.br"
     },
     {
         "nome": "Hub de Economia e Clima",
@@ -111,8 +95,6 @@ MAPA_SITES = [
 
 DB_FILE = "historico_editais.csv"
 
-# Headers mais completos, imitando melhor um navegador real (ajuda contra
-# alguns WAFs, embora não seja garantia — ex.: FAPEMAT segue bloqueando).
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                    '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -121,22 +103,6 @@ HEADERS = {
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
 }
-
-# Padrões de href para busca via BeautifulSoup
-PADROES_SUBMISSAO_HREF = [
-    '/e/chamada-publica/',
-    'cadastro.finep.gov.br',
-    'financiamento.finep.gov.br',   # plataforma FAP (chamadas para ICTs/empresas)
-    'plataforma.finep',
-]
-
-# Padrões de regex para busca no HTML bruto (captura links em JS, texto, atributos, etc.)
-PADROES_SUBMISSAO_REGEX = [
-    r'https?://(?:www\.)?finep\.gov\.br/e/chamada-publica/[\d/]+',
-    r'https?://financiamento\.finep\.gov\.br[^\s"\'<>&]+',
-    r'https?://cadastro\.finep\.gov\.br[^\s"\'<>&]+',
-    r'https?://plataforma\.finep[^\s"\'<>&]+',
-]
 
 
 def enviar_email(titulo, resumo, link):
@@ -201,168 +167,84 @@ def verificar_palavras_chave(texto):
 
 
 def bate_filtro(filtro, *campos):
-    """
-    Verifica se algum dos padrões de 'filtro' (string ou lista de strings)
-    aparece em algum dos campos fornecidos (ex.: link, titulo).
-    """
     if isinstance(filtro, str):
         filtro = [filtro]
     campos_min = [c.lower() for c in campos if c]
     return any(f.lower() in campo for f in filtro for campo in campos_min)
 
 
-def extrair_detalhes_finep(url_edital):
-    """
-    Acessa a página individual do edital da FINEP e extrai:
-    - Descrição completa (para verificação de palavras-chave)
-    - Link de submissão da plataforma externa
-
-    Estratégia dupla:
-    1. Busca via BeautifulSoup em <a href> (links explícitos no HTML)
-    2. Busca via regex no HTML bruto (captura links em JS inline, atributos data-*, texto, etc.)
-    """
-    detalhes = {"descricao": "", "link_submissao": None}
-    try:
-        res = requests.get(url_edital, headers=HEADERS, timeout=30, verify=False)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        html_bruto = res.text
-
-        # Texto limpo para palavras-chave
-        detalhes["descricao"] = ' '.join(soup.get_text().split())
-
-        # --- TENTATIVA 1: links <a href> normais ---
-        for a in soup.find_all('a', href=True):
-            href = a['href'].strip()
-            if any(p in href for p in PADROES_SUBMISSAO_HREF) and 'chamadaspublicas' not in href:
-                detalhes["link_submissao"] = (
-                    'https://www.finep.gov.br' + href if href.startswith('/') else href
-                )
-                print(f"    🔗 Link submissão (href): {detalhes['link_submissao']}")
-                break
-
-        # --- TENTATIVA 2: regex no HTML bruto (fallback para links em JS ou atributos) ---
-        if not detalhes["link_submissao"]:
-            for padrao in PADROES_SUBMISSAO_REGEX:
-                match = re.search(padrao, html_bruto)
-                if match:
-                    detalhes["link_submissao"] = match.group(0).rstrip('.,;)')
-                    print(f"    🔗 Link submissão (regex): {detalhes['link_submissao']}")
-                    break
-
-        if not detalhes["link_submissao"]:
-            print(f"    ⚠️  Nenhum link de submissão encontrado para: {url_edital}")
-
-    except Exception as e:
-        print(f"    Erro ao extrair detalhes de {url_edital}: {e}")
-
-    return detalhes
-
-
 def monitorar_finep(vistos, novos_encontrados):
     """
-    Percorre todas as páginas de chamadas abertas da FINEP com paginação.
-    Para cada edital novo:
-      1. Acessa a página individual para extrair descrição e link de submissão
-      2. Verifica palavras-chave na descrição completa (não só no título)
-      3. Envia notificação com link do edital + link de submissão quando disponível
-
-    OBS: o robots.txt da FINEP desautoriza acesso automatizado. requests não
-    obedece robots.txt por padrão, então isso não impede o scraping — mas é
-    um sinal de que, em caso de tráfego alto, há risco de bloqueio de IP.
+    Monitora o novo portal da FINEP consumindo a API JSON, lidando com a paginação.
     """
-    base = "https://www.finep.gov.br"
-    start = 0
-    print("Verificando FINEP (paginação + extração de links de submissão)...")
+    print("Verificando FINEP (Nova API)...")
+    pagina = 1
+    tem_mais_paginas = True
 
-    while True:
-        url = f"{base}/chamadas-publicas/chamadaspublicas?situacao=aberta&start={start}"
+    while tem_mais_paginas:
+        url_api = f"https://www.finep.gov.br/o/c/chamadapublicas?sort=dataDePublicacao:desc&search=&page={pagina}&pageSize=250"
+        
         try:
-            res = requests.get(url, headers=HEADERS, timeout=30, verify=False)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            itens = soup.find_all(['h3', 'h4'])
-
-            if not itens:
-                print(f"  FINEP: sem itens na página start={start}, encerrando.")
+            res = requests.get(url_api, headers=HEADERS, timeout=30, verify=False)
+            
+            if res.status_code != 200:
+                print(f"  FINEP: Falha ao acessar a página {pagina} (Status: {res.status_code}).")
                 break
+                
+            dados = res.json()
+            lista_editais = dados.get('items', [])
+            
+            if not lista_editais:
+                break # Encerra se a página vier sem itens
 
-            encontrados_nesta_pag = 0
-            for item in itens:
-                link_tag = item.find('a', href=True)
-                if not link_tag:
-                    continue
+            for edital in lista_editais:
+                titulo = edital.get('titulo') or edital.get('nome') or "Oportunidade FINEP Sem Título"
+                id_chamada = edital.get('id')
+                
+                # Monta o link para o painel de oportunidades do novo site
+                link_final = f"https://www.finep.gov.br/oportunidades?id={id_chamada}" if id_chamada else "https://www.finep.gov.br/oportunidades"
 
-                href = link_tag['href'].strip()
-                link_listagem = base + href if href.startswith('/') else href
-                titulo = link_tag.get_text().strip()
-
-                if not titulo or 'chamadapublica' not in link_listagem.lower():
-                    continue
-
-                encontrados_nesta_pag += 1
-
-                if link_listagem in vistos:
+                if link_final in vistos:
                     continue
 
                 print(f"  Novo edital: {titulo}")
-                vistos.append(link_listagem)
+                vistos.append(link_final)
 
-                # Acessa página do edital para descrição completa + link de submissão
-                detalhes = extrair_detalhes_finep(link_listagem)
-                time.sleep(1)
+                # Extrai dados da API para o filtro de palavras-chave
+                objetivo = edital.get('objetivo', '')
+                condicao = edital.get('condicaoDeFinanciamento', '')
+                publico = edital.get('publico', '')
+                texto_completo = f"{titulo} {objetivo} {condicao} {publico}"
 
-                # Texto completo para palavras-chave (título + corpo da página)
-                texto_completo = titulo + " " + detalhes["descricao"]
-
-                # Link final: usa submissão se disponível, senão usa listagem
-                link_final = detalhes["link_submissao"] if detalhes["link_submissao"] else link_listagem
                 novos_encontrados.append(["FINEP", titulo, link_final])
 
                 if verificar_palavras_chave(texto_completo):
                     print(f"  🎯 FINEP RELEVANTE: {titulo}")
-                    resumo = gerar_resumo_ia(link_listagem)  # Resumo da página pública (mais completo)
+                    
+                    # Usa o próprio texto retornado pela API para o Gemini resumir (muito mais limpo)
+                    resumo = model.generate_content(
+                        f"Resuma este edital para a Embrapa (Foco: Objetivo, Público, Datas, Valores). Dados brutos: {texto_completo[:8000]}"
+                    ).text if texto_completo.strip() else "Resumo não disponível automaticamente."
 
-                    # Monta mensagem com ambos os links quando disponível
-                    if detalhes["link_submissao"]:
-                        msg = (
-                            f"🔔 *NOVO EDITAL (FINEP)*\n\n"
-                            f"📄 *{titulo}*\n\n"
-                            f"📋 [Ver Edital]({link_listagem})\n"
-                            f"📝 [Submeter Proposta]({detalhes['link_submissao']})"
-                        )
-                    else:
-                        msg = (
-                            f"🔔 *NOVO EDITAL (FINEP)*\n\n"
-                            f"📄 *{titulo}*\n\n"
-                            f"🔗 [Acessar Edital]({link_listagem})"
-                        )
+                    msg = (
+                        f"🔔 *NOVO EDITAL (FINEP)*\n\n"
+                        f"📄 *{titulo}*\n\n"
+                        f"🔗 [Acessar Oportunidade]({link_final})"
+                    )
 
                     enviar_telegram(msg)
-                    enviar_email(titulo, resumo, link_listagem)
+                    enviar_email(titulo, resumo, link_final)
                     time.sleep(2)
 
-            # Verifica paginação
-            proximo = soup.find('a', string=lambda t: t and 'Próx' in t)
-            if not proximo or encontrados_nesta_pag == 0:
-                print(f"  FINEP: última página processada (start={start}).")
-                break
-
-            start += 10
-            time.sleep(1)
+            pagina += 1
+            time.sleep(1) # Pausa amigável entre páginas
 
         except Exception as e:
-            print(f"  Erro FINEP (start={start}): {e}")
+            print(f"  Erro FINEP (página {pagina}): {e}")
             break
 
 
 def monitorar_pagina_unica(site, vistos, novos_encontrados):
-    """
-    Para sites onde o edital é publicado inteiramente em uma única página
-    (sem sublinks de listagem -> detalhe), como o Hub de Economia e Clima.
-
-    Estratégia: calcula um hash do texto da página. Se o hash mudar em
-    relação ao último visto, trata como "conteúdo novo/atualizado" e
-    verifica as palavras-chave no texto inteiro da página.
-    """
     try:
         res = requests.get(site["url"], headers=HEADERS, timeout=30, verify=False)
         soup = BeautifulSoup(res.text, 'html.parser')
@@ -372,11 +254,10 @@ def monitorar_pagina_unica(site, vistos, novos_encontrados):
         chave_hash = f"{site['nome']}::hash::{hash_conteudo}"
 
         if chave_hash in vistos:
-            return  # conteúdo já visto, nada novo
+            return
 
         vistos.append(chave_hash)
 
-        # Tenta usar o primeiro h2/h3 como título do edital em destaque
         titulo_tag = soup.find(['h2', 'h3'])
         titulo = titulo_tag.get_text().strip() if titulo_tag else f"Atualização em {site['nome']}"
 
@@ -404,7 +285,7 @@ def monitorar():
     print(f"[{time.strftime('%H:%M:%S')}] Iniciando monitoramento...")
     novos = []
 
-    # --- FINEP: tratamento especial ---
+    # --- FINEP: Nova rotina de API ---
     monitorar_finep(vistos, novos)
 
     # --- Demais sites ---
@@ -412,7 +293,6 @@ def monitorar():
         try:
             print(f"Verificando {site['nome']}...")
 
-            # Sites de página única (ex.: Hub de Economia e Clima)
             if site.get("modo") == "pagina_unica":
                 monitorar_pagina_unica(site, vistos, novos)
                 continue
@@ -436,6 +316,7 @@ def monitorar():
                         and len(titulo) > 15):
                     vistos.append(link)
                     novos.append([site["nome"], titulo, link])
+                    
                     if verificar_palavras_chave(titulo):
                         print(f"🎯 RELEVANTE: {titulo}")
                         resumo = gerar_resumo_ia(link)
@@ -452,9 +333,9 @@ def monitorar():
         pd.DataFrame(novos, columns=['fonte', 'titulo', 'link']).to_csv(
             DB_FILE, mode='a', header=not os.path.exists(DB_FILE), index=False
         )
-        print(f"✅ {len(novos)} novos processados.")
+        print(f"✅ {len(novos)} novos processados e salvos no CSV.")
     else:
-        print("ℹ️ Nenhum item novo encontrado nesta execução.")
+        print("ℹ️ Nenhum edital novo encontrado nesta execução.")
 
 
 if __name__ == "__main__":
